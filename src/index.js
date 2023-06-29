@@ -18,9 +18,8 @@ export const actionThrottled = action => ({
   action,
 });
 
-const get = (source, path, defaultValue) => path.reduce((acc, place) =>
-  (acc[place] === undefined || acc === defaultValue ? defaultValue : acc[place])
-  , source);
+const get = (source, path, defaultValue) =>
+  path.reduce((acc, place) => (acc.has(place) ? acc.get(place) : defaultValue), source);
 
 export default function createLifesaverMiddleware({
   dispatchLimit = 10,
@@ -28,13 +27,16 @@ export default function createLifesaverMiddleware({
   actionTypes = {},
   actionCreator = actionThrottled,
 } = {}) {
-  const ownActionTypes = {
-    [ACTION_THROTTLED]: {
-      limitDuration: 0,
-    },
-  };
-  const actionConfig = Object.assign({}, ownActionTypes, actionTypes);
-  const pastActions = {};
+  const ownActionTypes = new Map([
+    [
+      ACTION_THROTTLED,
+      {
+        limitDuration: 0,
+      },
+    ],
+  ]);
+  const actionConfig = new Map([...ownActionTypes, ...actionTypes]);
+  const pastActions = new Map();
 
   const getDispatchLimit = action =>
     get(actionConfig, [action.type, 'dispatchLimit'], dispatchLimit);
@@ -44,7 +46,7 @@ export default function createLifesaverMiddleware({
 
   return ({ dispatch }) => next => (action) => {
     const now = Date.now();
-    const actionRecord = pastActions[action.type];
+    const actionRecord = pastActions.get(action.type);
     const freshRecord = {
       time: now,
       count: 1,
@@ -55,14 +57,14 @@ export default function createLifesaverMiddleware({
       actionRecord.count += 1;
     } else {
       // If there is no action record, create a new one and continue.
-      pastActions[action.type] = freshRecord;
+      pastActions.set(action.type, freshRecord);
       return next(action);
     }
 
     if (now - actionRecord.time >= getLimitDuration(action) && !actionRecord.timeout) {
       // If it has been longer since the recorded time than the limit duration,
       // and no timeout has been set, refresh the action record and continue.
-      pastActions[action.type] = freshRecord;
+      pastActions.set(action.type, freshRecord);
       return next(action);
     }
 
@@ -74,7 +76,7 @@ export default function createLifesaverMiddleware({
     // Set the action to be dispatched at the end of the timeout.
     actionRecord.next = () => {
       dispatch(action);
-      delete pastActions[action.type];
+      pastActions.delete(action.type);
     };
 
     if (!actionRecord.timeout) {
